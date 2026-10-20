@@ -32,6 +32,7 @@ class NoIOLoop(asyncio.SelectorEventLoop):
 if __name__ == "__main__":
     import test_opal
     test_opal.CoordinatorTests.loop_factory = staticmethod(NoIOLoop)
+    test_opal.FlowTests.loop_factory = staticmethod(NoIOLoop)
     result = unittest.TextTestRunner(verbosity=2).run(
         unittest.defaultTestLoader.loadTestsFromModule(test_opal))
     raise SystemExit(not result.wasSuccessful())

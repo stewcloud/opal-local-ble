@@ -10,7 +10,7 @@ from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import callback
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
-from .const import CONF_INTERVAL, CONF_PAIR, CONF_SOURCE, DEFAULT_INTERVAL, DOMAIN
+from .const import CONF_INTERVAL, CONF_PAIR, CONF_SOURCE, DEFAULT_INTERVAL, DOMAIN, SERVICE
 from .coordinator import OpalCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -70,27 +70,60 @@ class OpalConfigFlow(ConfigFlow, domain=DOMAIN):
             }),
         )
 
+    def _device_choices(self):
+        """Only list matching, unconfigured devices from connectable scanners."""
+        choices = {}
+        configured = {address.upper() for address in self._async_current_ids() if address}
+        for info in bluetooth.async_discovered_service_info(self.hass, connectable=True):
+            name = info.name or ""
+            services = {uuid.lower() for uuid in info.service_uuids}
+            if not (name.startswith("OPAL Bluetooth-") or SERVICE in services):
+                continue
+            address = info.address.upper()
+            if address in configured:
+                continue
+            choices[address] = f"{name or 'Opal'} ({address}, {info.rssi} dBm)"
+        return choices
+
     async def async_step_user(self, user_input=None):
+        """Present discovered Opals first; never probe every nearby BLE device."""
+        errors = {}
+        if user_input is None or user_input.get("device") == "scan_again":
+            try:
+                # One HA-managed active sweep; never start an independent scanner.
+                await bluetooth.async_request_active_scan(self.hass, duration=5)
+            except (TimeoutError, OSError) as err:
+                _LOGGER.debug("Opal discovery sweep failed: %s", err)
+                errors["base"] = "scan_failed"
+        choices = self._device_choices()
+        if user_input is not None:
+            selected = user_input.get("device")
+            if selected == "manual":
+                return await self.async_step_manual()
+            if selected in choices:
+                self.address = selected
+                return await self.async_step_bluetooth_confirm()
+            if selected != "scan_again":
+                errors["base"] = "device_not_found"
+        choices["scan_again"] = "Scan again"
+        choices["manual"] = "Enter a Bluetooth address manually"
+        return self.async_show_form(
+            step_id="user", errors=errors,
+            data_schema=vol.Schema({vol.Required("device"): vol.In(choices)}),
+        )
+
+    async def async_step_manual(self, user_input=None):
         errors = {}
         if user_input is not None:
             address = user_input[CONF_ADDRESS].strip().upper()
             if not re.fullmatch(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", address):
                 errors[CONF_ADDRESS] = "invalid_address"
             else:
-                try:
-                    return await self._finish(address, user_input[CONF_PAIR], user_input[CONF_SOURCE])
-                except UpdateFailed as err:
-                    _LOGGER.warning("Opal setup failed: %s", err)
-                    errors["base"] = "cannot_connect"
-        discovered = [info.address for info in bluetooth.async_discovered_service_info(self.hass)
-                      if (info.name or "").startswith("OPAL Bluetooth-")]
+                self.address = address
+                return await self.async_step_bluetooth_confirm()
         return self.async_show_form(
-            step_id="user", errors=errors,
-            data_schema=vol.Schema({
-                vol.Required(CONF_ADDRESS, default=discovered[0] if discovered else ""): str,
-                vol.Required(CONF_PAIR, default=True): bool,
-                vol.Required(CONF_SOURCE, default="auto"): vol.In(source_choices(self.hass)),
-            }),
+            step_id="manual", errors=errors,
+            data_schema=vol.Schema({vol.Required(CONF_ADDRESS): str}),
         )
 
     @staticmethod

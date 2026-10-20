@@ -4,7 +4,7 @@
 
 Local Home Assistant control for **first-generation GE / FirstBuild Bluetooth Opal ice makers**, through an HA Bluetooth adapter or active ESPHome proxy. No vendor app, account, cloud, MQTT, or dedicated ice-maker firmware.
 
-**Experimental, version 0.2.0.** Pairing, night mode, ice-making control and bin-removed detection were user-confirmed on a first-generation GE Opal using 0.1.0. The new proxy selection/failover behavior needs live testing. This is not an official GE integration.
+**Experimental, version 0.2.1.** Pairing, night mode, ice-making control and bin-removed detection were user-confirmed on a first-generation GE Opal using 0.1.0. The new proxy selection/failover behavior needs live testing. This is not an official GE integration.
 
 ## HACS installation
 
@@ -12,7 +12,7 @@ Local Home Assistant control for **first-generation GE / FirstBuild Bluetooth Op
 2. Add `https://github.com/stewcloud/opal-local-ble`, category **Integration**.
 3. Download **Opal Local BLE** and restart Home Assistant.
 4. Add **Opal Local BLE** under Settings → Devices & services, or accept discovery.
-5. Keep **Pair after connecting** enabled; it was required on the first tested GE unit.
+5. Choose your Opal from the detected-device list. The flow requests an HA-managed active scan and also offers Scan again and manual address entry. Keep **Pair after connecting** enabled; it was required on the first tested GE unit.
 6. Select Automatic or choose the nearby Bluetooth adapter/proxy explicitly.
 
 Disable other Opal BLE integrations or dedicated Opal BLE clients before setup to avoid competing connections.
@@ -55,7 +55,7 @@ The proxy must be connected to HA through ESPHome and in Bluetooth range of the 
 - HA-managed BLE device objects retain local/remote backend routing.
 - Automatic mode prefers HA's selected adapter when present, then other connectable candidates (up to three) if connection/pairing fails **before** an operation starts.
 - Selecting a proxy pins the connection to that proxy. If it disappears, the integration does not silently switch bonding identity.
-- Pairing is explicitly requested after connection. Successful pairing is remembered per source during this integration runtime, and retried after an authentication-related poll error or reload.
+- Pairing is explicitly requested after connection. Authentication is requested on every new connection. An authentication-rejected read is retried once after requesting authentication again on the same connection. Persistent failure reports a bond-repair hint. Commands are never replayed.
 - Bonds belong to each adapter/proxy; a USB adapter's bond is not shared across all proxies.
 - Commands request a status refresh. Failed writes are never replayed on another adapter.
 - Passkey entry beyond the proxy's native pairing behavior is not implemented.
@@ -85,7 +85,7 @@ python -m unittest discover -s tests -p 'test_*.py' -v
 python -m compileall -q custom_components
 ```
 
-The 23 tests exercise actual protocol/coordinator code with minimal HA/transport stubs: decoding, cleanup, serialization, pairing, selected-proxy routing, automatic failover and no command replay. They do not validate the complete HA loader/config flow or physical BLE interoperability.
+The 35 tests exercise actual protocol/coordinator code with minimal HA/transport stubs: decoding, cleanup, serialization, pairing, selected-proxy routing, automatic failover and no command replay. They do not validate the complete HA loader/config flow or physical BLE interoperability.
 
 In the Windows build sandbox, `python tests/run_offline.py` uses a no-I/O loop because socketpair is unavailable. Never use that runner for real BLE.
 

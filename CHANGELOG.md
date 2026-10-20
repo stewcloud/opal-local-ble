@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1
+
+- Initial setup scans and lists matching Opals by name, address and signal strength, with Scan again and manual entry. Configured and unrelated devices are excluded.
+- Remove the runtime pairing cache: authenticate each fresh BLE connection.
+- Retry authentication-rejected reads once on the same connection; never replay commands.
+- Add discovery/selection and authentication regression coverage (35 tests total).
+- Addresses the observed proxy Insufficient authentication error path; physical proxy verification remains required.
+
 ## 0.2.0
 
 - Poll every 10 seconds by default; configurable from 5–600 seconds.

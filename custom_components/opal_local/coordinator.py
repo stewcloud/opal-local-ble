@@ -28,7 +28,6 @@ class OpalCoordinator(DataUpdateCoordinator):
         self.entry = entry
         self.lock = asyncio.Lock()
         self.last_source = None
-        self.paired_sources = set()
 
     def candidates(self):
         """Use HA's connectable devices, retaining each proxy's own backend."""
@@ -70,12 +69,11 @@ class OpalCoordinator(DataUpdateCoordinator):
                     # Explicit post-connect pairing is supported by ESPHome proxies
                     # advertising PAIRING. Do not rely on a backend honoring pair=
                     # during connection (older HA/Bleak combinations differ).
-                    if self.entry.options.get(CONF_PAIR, True) and source not in self.paired_sources:
+                    if self.entry.options.get(CONF_PAIR, True):
                         try:
                             await client.pair()
                         except NotImplementedError as err:
                             raise BleakError("This adapter/proxy does not support pairing. Update ESPHome proxy firmware (pairing requires 2024.3+), enable active connections, or use an adapter that supports bonding.") from err
-                        self.paired_sources.add(source)
                     if client.services.get_service(SERVICE) is None:
                         raise BleakError("The device does not expose the first-generation Opal service")
                 self.last_source = source
@@ -115,10 +113,18 @@ class OpalCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self):
         try:
             async with self.connection() as client:
-                return await self.read(client)
+                try:
+                    return await self.read(client)
+                except BleakError as err:
+                    if not self.entry.options.get(CONF_PAIR, True) or not is_authentication_error(err):
+                        raise
+                    # A bond is persistent, but encryption/authentication is per
+                    # connection. Retry reads only, never an appliance command.
+                    await client.pair()
+                    return await self.read(client)
         except (BleakError, TimeoutError, OSError, ValueError, NotImplementedError) as err:
-            if any(word in str(err).lower() for word in ("authentication", "encryption", "insufficient authorization")):
-                self.paired_sources.discard(self.last_source)
+            if is_authentication_error(err):
+                raise UpdateFailed("Opal rejected Bluetooth authentication. Enable pairing and select the intended proxy. If this persists, repair that proxy's Opal bond; pairing on a different adapter is not shared.") from err
             raise UpdateFailed(f"Opal Bluetooth update failed: {err}") from err
 
     async def async_command(self, key: str, enabled: bool):
@@ -141,3 +147,11 @@ class OpalCoordinator(DataUpdateCoordinator):
             await self.async_request_refresh()
         except (BleakError, TimeoutError, OSError, ValueError, NotImplementedError) as err:
             raise HomeAssistantError(f"Opal command failed: {err}") from err
+
+
+def is_authentication_error(err):
+    """Recognize security failures without treating every GATT error as auth."""
+    message = str(err).lower()
+    return any(word in message for word in (
+        "authentication", "insufficient encryption", "insufficient authorization",
+    ))

@@ -196,10 +196,10 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         return types.SimpleNamespace(ble_device=object(), scanner=types.SimpleNamespace(source=source),
                                      advertisement=types.SimpleNamespace(rssi=rssi))
 
-    async def test_post_connect_pairing_once_per_source(self):
+    async def test_authenticate_every_new_connection(self):
         await self.coordinator._async_update_data()
         await self.coordinator._async_update_data()
-        self.client.pair.assert_awaited_once()
+        self.assertEqual(self.client.pair.await_count, 2)
         self.assertFalse(self.m.establish_connection.call_args.kwargs["pair"])
 
     async def test_pairing_can_be_disabled(self):
@@ -236,6 +236,118 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_poll_default_is_ten_seconds(self):
         self.assertEqual(self.coordinator.update_interval.total_seconds(), 10)
+
+    async def test_auth_read_reauthenticates_and_retries_once(self):
+        self.client.read_gatt_char.side_effect = [FakeBleakError("Insufficient authentication")] + [b"\x01"] * 5
+        data = await self.coordinator._async_update_data()
+        self.assertEqual(data["status"], 1)
+        self.assertEqual(self.client.pair.await_count, 2)
+        self.client.write_gatt_char.assert_not_awaited()
+
+    async def test_persistent_auth_failure_is_bounded_and_actionable(self):
+        self.client.read_gatt_char.side_effect = FakeBleakError("Insufficient authentication")
+        with self.assertRaisesRegex(FakeUpdateFailed, "repair that proxy"):
+            await self.coordinator._async_update_data()
+        self.assertEqual(self.client.read_gatt_char.await_count, 2)
+        self.assertEqual(self.client.pair.await_count, 2)
+        self.client.disconnect.assert_awaited_once()
+
+    async def test_pairing_disabled_does_not_retry_auth_reads(self):
+        self.coordinator.entry.options["pair"] = False
+        self.client.read_gatt_char.side_effect = FakeBleakError("Insufficient authentication")
+        with self.assertRaises(FakeUpdateFailed):
+            await self.coordinator._async_update_data()
+        self.client.pair.assert_not_awaited()
+        self.assertEqual(self.client.read_gatt_char.await_count, 1)
+
+
+class FakeFlow:
+    def __init_subclass__(cls, **kwargs):
+        pass
+
+    def _async_current_ids(self):
+        return getattr(self, "configured", set())
+
+    def async_show_form(self, **kwargs):
+        return kwargs
+
+
+class FlowTests(unittest.IsolatedAsyncioTestCase):
+    """Exercise real flow discovery/selection using minimal API boundaries."""
+    async def asyncSetUp(self):
+        stubs = stub_modules()
+        for name in ("homeassistant.config_entries", "homeassistant.const", "homeassistant.core", "voluptuous"):
+            stubs[name] = types.ModuleType(name)
+        stubs["homeassistant.config_entries"].ConfigFlow = FakeFlow
+        stubs["homeassistant.config_entries"].OptionsFlow = FakeFlow
+        stubs["homeassistant.const"].CONF_ADDRESS = "address"
+        stubs["homeassistant.core"].callback = lambda function: function
+        vol = stubs["voluptuous"]
+        vol.Required = lambda key, **kwargs: key
+        vol.In = lambda choices: choices
+        vol.Schema = lambda schema: schema
+        self.bt = stubs["homeassistant.components.bluetooth"]
+        self.bt.async_request_active_scan = AsyncMock()
+        self.devices = []
+        self.bt.async_discovered_service_info = lambda *a, **kwargs: self.devices
+        self.modules = patch.dict(sys.modules, stubs)
+        self.modules.start()
+        for name in ("coordinator", "config_flow"):
+            sys.modules.pop("opal_under_test." + name, None)
+        self.m = module("config_flow")
+        self.flow = self.m.OpalConfigFlow()
+        self.flow.hass = object()
+
+    async def asyncTearDown(self):
+        self.modules.stop()
+
+    def device(self, name, address="AA:BB:CC:DD:EE:FF", services=()):
+        return types.SimpleNamespace(name=name, address=address, service_uuids=services, rssi=-62)
+
+    async def test_initial_scan_lists_matching_devices(self):
+        self.devices.extend([self.device("OPAL Bluetooth-123"), self.device("Unrelated", "00:11:22:33:44:55")])
+        result = await self.flow.async_step_user()
+        choices = result["data_schema"]["device"]
+        self.assertIn("AA:BB:CC:DD:EE:FF", choices)
+        self.assertNotIn("00:11:22:33:44:55", choices)
+        self.assertIn("-62 dBm", choices["AA:BB:CC:DD:EE:FF"])
+        self.bt.async_request_active_scan.assert_awaited_once()
+
+    async def test_service_uuid_match_without_name(self):
+        self.devices.append(self.device(None, services=[module("const").SERVICE]))
+        self.assertIn("AA:BB:CC:DD:EE:FF", self.flow._device_choices())
+
+    async def test_configured_device_is_excluded(self):
+        self.devices.append(self.device("OPAL Bluetooth-123"))
+        self.flow.configured = {"aa:bb:cc:dd:ee:ff"}
+        self.assertFalse(self.flow._device_choices())
+
+    async def test_empty_scan_still_allows_rescan_or_manual(self):
+        result = await self.flow.async_step_user()
+        self.assertEqual(set(result["data_schema"]["device"]), {"scan_again", "manual"})
+
+    async def test_rescan_requests_fresh_ha_sweep(self):
+        await self.flow.async_step_user({"device": "scan_again"})
+        self.bt.async_request_active_scan.assert_awaited_once_with(self.flow.hass, duration=5)
+
+    async def test_device_selection_opens_connection_options(self):
+        self.devices.append(self.device("OPAL Bluetooth-123"))
+        self.flow.async_step_bluetooth_confirm = AsyncMock(return_value={"step_id": "bluetooth_confirm"})
+        result = await self.flow.async_step_user({"device": "AA:BB:CC:DD:EE:FF"})
+        self.assertEqual(self.flow.address, "AA:BB:CC:DD:EE:FF")
+        self.assertEqual(result["step_id"], "bluetooth_confirm")
+
+    async def test_manual_path_remains_available(self):
+        result = await self.flow.async_step_user({"device": "manual"})
+        self.assertEqual(result["step_id"], "manual")
+
+    async def test_disappeared_selection_is_rejected(self):
+        result = await self.flow.async_step_user({"device": "AA:BB:CC:DD:EE:FF"})
+        self.assertEqual(result["errors"]["base"], "device_not_found")
+
+    async def test_manual_address_validation(self):
+        result = await self.flow.async_step_manual({"address": "invalid"})
+        self.assertEqual(result["errors"]["address"], "invalid_address")
 
 
 if __name__ == "__main__":

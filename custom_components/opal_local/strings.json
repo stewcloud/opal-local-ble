@@ -3,12 +3,10 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect a first-generation Opal",
-        "description": "Choose a connectable adapter or an active ESPHome Bluetooth proxy in range. Keep pairing enabled for first-generation Opal.",
+        "title": "Find your Opal",
+        "description": "Choose an Opal detected by Home Assistant Bluetooth or its active proxies. Use Scan again to refresh the list.",
         "data": {
-          "address": "Bluetooth MAC address",
-          "pair": "Pair after connecting (recommended for first-generation Opal)",
-          "bluetooth_source": "Bluetooth adapter / proxy"
+          "device": "Detected Opal"
         }
       },
       "bluetooth_confirm": {
@@ -18,11 +16,20 @@
           "pair": "Pair after connecting (recommended for first-generation Opal)",
           "bluetooth_source": "Bluetooth adapter / proxy"
         }
+      },
+      "manual": {
+        "title": "Enter a Bluetooth address",
+        "description": "Use this if your device is not listed. A connectable adapter or proxy must still be in range.",
+        "data": {
+          "address": "Bluetooth MAC address"
+        }
       }
     },
     "error": {
       "cannot_connect": "Unable to read Opal status. Check Bluetooth range, active connection support, other connected apps, and pairing requirements. See HA logs for details.",
-      "invalid_address": "Enter a MAC address such as AA:BB:CC:DD:EE:FF."
+      "invalid_address": "Enter a MAC address such as AA:BB:CC:DD:EE:FF.",
+      "scan_failed": "The Bluetooth scan could not complete. Choose a previously detected device or try scanning again.",
+      "device_not_found": "That device is no longer in the detected list. Scan again or enter its address manually."
     },
     "abort": {
       "already_configured": "This Opal is already configured."
