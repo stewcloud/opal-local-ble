@@ -1,0 +1,43 @@
+{
+  "title": "Opal Local BLE",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect a first-generation Opal",
+        "description": "Choose a connectable adapter or an active ESPHome Bluetooth proxy in range. Keep pairing enabled for first-generation Opal.",
+        "data": {
+          "address": "Bluetooth MAC address",
+          "pair": "Pair after connecting (recommended for first-generation Opal)",
+          "bluetooth_source": "Bluetooth adapter / proxy"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "Connect discovered Opal",
+        "description": "Choose a connectable adapter or an active ESPHome Bluetooth proxy in range. Keep pairing enabled for first-generation Opal.",
+        "data": {
+          "pair": "Pair after connecting (recommended for first-generation Opal)",
+          "bluetooth_source": "Bluetooth adapter / proxy"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to read Opal status. Check Bluetooth range, active connection support, other connected apps, and pairing requirements. See HA logs for details.",
+      "invalid_address": "Enter a MAC address such as AA:BB:CC:DD:EE:FF."
+    },
+    "abort": {
+      "already_configured": "This Opal is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opal Bluetooth options",
+        "data": {
+          "poll_interval": "Poll interval (5\u2013600 seconds)",
+          "pair": "Pair after connecting",
+          "bluetooth_source": "Bluetooth adapter / proxy"
+        }
+      }
+    }
+  }
+}
